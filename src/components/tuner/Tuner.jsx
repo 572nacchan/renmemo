@@ -4,7 +4,8 @@ const NOTE_NAMES = ['C', 'C#', 'D', 'D#', 'E', 'F', 'F#', 'G', 'G#', 'A', 'A#', 
 const A4_MIDI = 69
 
 // EMAの平滑化係数 — 小さいほど滑らか（0.1〜0.3推奨）
-const FREQ_ALPHA = 0.15
+const FREQ_ALPHA = 0.08
+const CENTS_ALPHA = 0.06
 // 同じ音名がこのフレーム数続いたら表示を切り替え（≒100ms）
 const STABLE_FRAMES = 4
 // 表示更新間隔（ms）：30fps
@@ -140,9 +141,9 @@ export default function Tuner() {
         const info = freqToNoteInfo(smoothedFreqRef.current, a4)
         if (!info) return
 
-        // セントもEMAでスムージング
+        // セントはさらに強くスムージング（針の細かい揺れを抑制）
         smoothedCentsRef.current =
-          FREQ_ALPHA * info.cents + (1 - FREQ_ALPHA) * smoothedCentsRef.current
+          CENTS_ALPHA * info.cents + (1 - CENTS_ALPHA) * smoothedCentsRef.current
 
         const smoothedInfo = {
           ...info,
@@ -227,7 +228,7 @@ export default function Tuner() {
                 <line
                   x1="100" y1="100" x2={x} y2={y}
                   stroke={needleColor} strokeWidth="3" strokeLinecap="round"
-                  style={{ transition: 'x2 0.2s ease-out, y2 0.2s ease-out, stroke 0.2s' }}
+                  style={{ transition: 'x2 0.3s ease-out, y2 0.3s ease-out, stroke 0.3s' }}
                 />
               )
             })()}
