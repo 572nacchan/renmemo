@@ -3,17 +3,28 @@ import { useState, useEffect, useRef, useCallback } from 'react'
 const NOTE_NAMES = ['C', 'C#', 'D', 'D#', 'E', 'F', 'F#', 'G', 'G#', 'A', 'A#', 'B']
 const A4_MIDI = 69
 
+// EMAの平滑化係数 — 小さいほど滑らか（0.1〜0.3推奨）
+const FREQ_ALPHA = 0.15
+// 同じ音名がこのフレーム数続いたら表示を切り替え（≒100ms）
+const STABLE_FRAMES = 4
+// 表示更新間隔（ms）：30fps
+const FRAME_INTERVAL = 33
+// ノイズゲート
+const RMS_THRESHOLD = 0.015
+// 自己相関の信頼度閾値
+const CORR_THRESHOLD = 0.92
+
 function freqToNoteInfo(freq, a4) {
   if (!freq || freq <= 0) return null
   const semitones = 12 * Math.log2(freq / a4) + A4_MIDI
   const midi = Math.round(semitones)
   const cents = Math.round((semitones - midi) * 100)
   const octave = Math.floor(midi / 12) - 1
-  const name = NOTE_NAMES[midi % 12]
+  const name = NOTE_NAMES[((midi % 12) + 12) % 12]
   return { name, octave, cents, freq: freq.toFixed(1) }
 }
 
-// 自己相関関数による基本周波数推定
+// 自己相関による基本周波数推定 — confidence（信頼度）も返す
 function detectPitch(buffer, sampleRate) {
   const SIZE = buffer.length
   const MAX_SAMPLES = Math.floor(SIZE / 2)
@@ -21,7 +32,6 @@ function detectPitch(buffer, sampleRate) {
   let bestCorr = 0
   let lastCorr = 1
   let foundGoodCorr = false
-  const threshold = 0.9
 
   const corr = new Float32Array(MAX_SAMPLES)
   for (let i = 0; i < MAX_SAMPLES; i++) {
@@ -32,7 +42,7 @@ function detectPitch(buffer, sampleRate) {
 
   for (let i = 1; i < MAX_SAMPLES; i++) {
     const normalized = corr[i] / corr[0]
-    if (normalized > threshold && normalized > lastCorr) {
+    if (normalized > CORR_THRESHOLD && normalized > lastCorr) {
       foundGoodCorr = true
       if (normalized > bestCorr) { bestCorr = normalized; bestOffset = i }
     } else if (foundGoodCorr) {
@@ -43,13 +53,13 @@ function detectPitch(buffer, sampleRate) {
 
   if (!foundGoodCorr || bestOffset === -1) return null
 
-  // 補間で精度向上
   const shift =
     bestOffset > 0 && bestOffset < MAX_SAMPLES - 1
-      ? (corr[bestOffset + 1] - corr[bestOffset - 1]) / (2 * (2 * corr[bestOffset] - corr[bestOffset - 1] - corr[bestOffset + 1]))
+      ? (corr[bestOffset + 1] - corr[bestOffset - 1]) /
+        (2 * (2 * corr[bestOffset] - corr[bestOffset - 1] - corr[bestOffset + 1]))
       : 0
 
-  return sampleRate / (bestOffset + shift)
+  return { freq: sampleRate / (bestOffset + shift), confidence: bestCorr }
 }
 
 const CENT_MAX = 50
@@ -65,6 +75,12 @@ export default function Tuner() {
   const streamRef = useRef(null)
   const rafRef = useRef(null)
 
+  // スムージング用の内部状態（Refで管理してRerender不要にする）
+  const smoothedFreqRef = useRef(null)
+  const noteHistoryRef = useRef([])   // 直近N回の音名
+  const smoothedCentsRef = useRef(0)
+  const lastFrameTimeRef = useRef(0)
+
   const stop = useCallback(() => {
     cancelAnimationFrame(rafRef.current)
     streamRef.current?.getTracks().forEach((t) => t.stop())
@@ -72,6 +88,8 @@ export default function Tuner() {
     audioCtxRef.current = null
     analyserRef.current = null
     streamRef.current = null
+    smoothedFreqRef.current = null
+    noteHistoryRef.current = []
     setActive(false)
     setNoteInfo(null)
   }, [])
@@ -89,25 +107,70 @@ export default function Tuner() {
       ctx.createMediaStreamSource(stream).connect(analyser)
 
       const buf = new Float32Array(analyser.fftSize)
-      const loop = () => {
+
+      const loop = (timestamp) => {
+        rafRef.current = requestAnimationFrame(loop)
+
+        // 30fps制限
+        if (timestamp - lastFrameTimeRef.current < FRAME_INTERVAL) return
+        lastFrameTimeRef.current = timestamp
+
         analyser.getFloatTimeDomainData(buf)
         const rms = Math.sqrt(buf.reduce((s, v) => s + v * v, 0) / buf.length)
-        if (rms > 0.01) {
-          const freq = detectPitch(buf, ctx.sampleRate)
-          setNoteInfo(freqToNoteInfo(freq, a4))
-        } else {
+
+        if (rms < RMS_THRESHOLD) {
+          // 無音: 状態リセット
+          smoothedFreqRef.current = null
+          noteHistoryRef.current = []
           setNoteInfo(null)
+          return
         }
-        rafRef.current = requestAnimationFrame(loop)
+
+        const result = detectPitch(buf, ctx.sampleRate)
+        if (!result) return
+
+        // EMAで周波数をスムージング
+        if (smoothedFreqRef.current === null) {
+          smoothedFreqRef.current = result.freq
+        } else {
+          smoothedFreqRef.current =
+            FREQ_ALPHA * result.freq + (1 - FREQ_ALPHA) * smoothedFreqRef.current
+        }
+
+        const info = freqToNoteInfo(smoothedFreqRef.current, a4)
+        if (!info) return
+
+        // セントもEMAでスムージング
+        smoothedCentsRef.current =
+          FREQ_ALPHA * info.cents + (1 - FREQ_ALPHA) * smoothedCentsRef.current
+
+        const smoothedInfo = {
+          ...info,
+          cents: Math.round(smoothedCentsRef.current),
+        }
+
+        // 音名の安定化: 直近N回が全て同じ音名になったときだけ音名を更新
+        const history = noteHistoryRef.current
+        history.push(info.name)
+        if (history.length > STABLE_FRAMES) history.shift()
+
+        const stable = history.length === STABLE_FRAMES && history.every((n) => n === info.name)
+
+        setNoteInfo((prev) => {
+          // 音名が安定して切り替わった or 初回表示
+          if (!prev || stable) return smoothedInfo
+          // 音名は維持しつつセント・周波数だけ更新（ちらつき防止）
+          return { ...prev, cents: smoothedInfo.cents, freq: smoothedInfo.freq }
+        })
       }
+
       rafRef.current = requestAnimationFrame(loop)
       setActive(true)
-    } catch (e) {
+    } catch {
       setError('マイクへのアクセスが拒否されました')
     }
   }, [a4])
 
-  // a4変更時に再起動
   useEffect(() => {
     if (active) { stop(); start() }
   }, [a4]) // eslint-disable-line react-hooks/exhaustive-deps
@@ -143,7 +206,6 @@ export default function Tuner() {
       <div className="bg-white rounded-2xl p-6 shadow-sm flex flex-col items-center gap-4">
         {/* 針メーター */}
         <div className="relative w-64 h-36 overflow-hidden">
-          {/* 目盛り弧 */}
           <svg viewBox="0 0 200 110" className="w-full h-full">
             {/* 背景弧 */}
             <path d="M 10 100 A 90 90 0 0 1 190 100" fill="none" stroke="#e5e7eb" strokeWidth="12" strokeLinecap="round" />
@@ -156,7 +218,7 @@ export default function Tuner() {
               const cy = 100 - 78 * Math.cos(angle)
               return <circle key={i} cx={cx} cy={cy} r={i === 0 ? 3 : 1.5} fill={i === 0 ? '#4f46e5' : '#9ca3af'} />
             })}
-            {/* 針 */}
+            {/* 針 — transitionを長めに取って動きを滑らかに */}
             {(() => {
               const angle = needleAngle * (Math.PI / 180)
               const x = 100 + 70 * Math.sin(angle)
@@ -165,13 +227,12 @@ export default function Tuner() {
                 <line
                   x1="100" y1="100" x2={x} y2={y}
                   stroke={needleColor} strokeWidth="3" strokeLinecap="round"
-                  style={{ transition: 'all 0.1s ease-out' }}
+                  style={{ transition: 'x2 0.2s ease-out, y2 0.2s ease-out, stroke 0.2s' }}
                 />
               )
             })()}
-            <circle cx="100" cy="100" r="5" fill={needleColor} style={{ transition: 'fill 0.1s' }} />
+            <circle cx="100" cy="100" r="5" fill={needleColor} style={{ transition: 'fill 0.2s' }} />
           </svg>
-          {/* セント表示 */}
           <div className="absolute bottom-0 left-0 right-0 flex justify-between px-2 text-xs text-gray-400">
             <span>-50</span><span>0</span><span>+50</span>
           </div>
