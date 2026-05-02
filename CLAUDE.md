@@ -18,45 +18,46 @@
 
 ```
 renmemo/
-├── public/
 ├── src/
 │   ├── components/
+│   │   ├── auth/
+│   │   │   └── AuthGuard.jsx      # 未認証リダイレクト
 │   │   ├── layout/
 │   │   │   ├── Header.jsx
 │   │   │   ├── BottomNav.jsx
 │   │   │   └── Layout.jsx
 │   │   ├── pieces/          # 曲・教本管理
 │   │   │   ├── PieceCard.jsx
-│   │   │   ├── PieceForm.jsx
-│   │   │   └── PieceList.jsx
+│   │   │   └── PieceForm.jsx
 │   │   ├── records/         # 練習記録
 │   │   │   ├── RecordForm.jsx
-│   │   │   ├── RecordItem.jsx
-│   │   │   └── RecordList.jsx
+│   │   │   └── RecordItem.jsx
 │   │   ├── calendar/        # カレンダー
-│   │   │   ├── CalendarView.jsx
-│   │   │   └── EventBadge.jsx
+│   │   │   ├── CalendarView.jsx   # カスタムカレンダーグリッド
+│   │   │   ├── EventBadge.jsx
+│   │   │   └── EventForm.jsx
 │   │   ├── tuner/           # チューナー
 │   │   │   └── Tuner.jsx
 │   │   ├── metronome/       # メトロノーム
 │   │   │   └── Metronome.jsx
 │   │   └── ui/              # 共通UIコンポーネント
-│   │       ├── Button.jsx
 │   │       ├── Modal.jsx
 │   │       └── Badge.jsx
+│   ├── contexts/
+│   │   └── AuthContext.jsx        # 認証状態管理（signIn/signUp/signOut）
 │   ├── pages/
+│   │   ├── LoginPage.jsx
 │   │   ├── HomePage.jsx
 │   │   ├── PiecesPage.jsx
 │   │   ├── RecordsPage.jsx
 │   │   ├── CalendarPage.jsx
-│   │   └── ToolsPage.jsx    # チューナー・メトロノーム
+│   │   └── ToolsPage.jsx    # チューナー・メトロノーム（ピル型タブ切り替え）
 │   ├── hooks/
 │   │   ├── usePieces.js
 │   │   ├── useRecords.js
-│   │   └── useAudio.js
+│   │   └── useEvents.js
 │   ├── lib/
-│   │   ├── supabase.js      # Supabaseクライアント初期化
-│   │   └── utils.js
+│   │   └── supabase.js      # Supabaseクライアント初期化
 │   ├── App.jsx
 │   └── main.jsx
 ├── .env.local               # SUPABASE_URLとSUPABASE_ANON_KEY
@@ -122,25 +123,30 @@ renmemo/
 - フォーム項目：日付、曲・教本の紐づけ（任意）、練習時間、メモ
 
 ### 4. カレンダー（`/calendar`）
-- 月表示カレンダー
-- 練習記録のある日に色マーカー
-- 演奏会・イベントのある日にバッジ表示
-- 日付クリックで当日の記録・イベント表示
+- カスタム月表示グリッド（react-calendar 不使用）
+- 各日セルに練習時間バー・イベント名を直接表示
+- 月ナビゲーション（前後ボタン＋今日に戻る）
+- 日付クリックで当日の記録・イベントをスケジュール帳風に表示
+- イベントの追加・編集・削除
 
 ### 5. ツール（`/tools`）
 - チューナーとメトロノームをタブ切り替え
 
 #### チューナー仕様
-- マイク入力（`getUserMedia`）で音高検出
-- A4基準ピッチを選択可能（440Hz / 441Hz / 442Hz / 443Hz / 444Hz）
-- 現在の音名と周波数を表示
-- セント単位のズレを針メーター（ゲージUI）で表示
+- マイク入力（`getUserMedia`）で音高検出（自己相関法）
+- EMA（指数移動平均）で周波数・セント値をスムージング（ちらつき防止）
+- 音名安定化: 同じ音名がSTABLE_FRAMES連続したときのみ表示切替
+- A4基準ピッチを選択可能（440Hz〜444Hz）
+- 音名・周波数・セントずれを表示
+- グラデーション弧＋針のSVGメーター（ダークテーマ）
 
 #### メトロノーム仕様
-- BPM設定（40〜240、スライダー＋数値入力）
-- 拍子設定（2/4, 3/4, 4/4, 6/8 など）
-- 強拍・弱拍で音を変える
-- タップテンポ機能
+- lookaheadスケジューラーで正確なタイミング制御（UIスレッドのジッターを回避）
+- BPM設定（40〜240、スライダー＋数値入力＋長押し対応±ボタン）
+- 拍子設定（2/4, 3/4, 4/4, 6/8）
+- 強拍・弱拍で音量・周波数・ビジュアルを変化
+- タップテンポ機能（直近4タップの平均）
+- テンポ名リアルタイム表示（Largo / Andante / Allegro 等）
 
 ## 🔐 認証
 
@@ -157,13 +163,13 @@ renmemo/
 
 ## ✅ 実装の優先順位
 
-### Phase 1（MVP）
+### Phase 1（MVP）✅ 完了
 1. Supabase接続・認証
 2. 曲・教本のCRUD
 3. 練習記録のCRUD
 4. カレンダー表示（記録の可視化）
 
-### Phase 2
+### Phase 2 ✅ 完了
 5. イベント管理・カウントダウン表示
 6. チューナー実装
 7. メトロノーム実装
@@ -177,8 +183,9 @@ renmemo/
 
 - チューナーはHTTPS環境でないとマイクアクセスができないため、開発時はlocalhostを使用する（localhostはHTTPS扱い）
 - Supabaseの`.env.local`は`.gitignore`に必ず追加する
-- 音声処理（チューナー・メトロノーム）はWebWorkerの使用を検討する（UIスレッドのブロックを避けるため）
-- カレンダーライブラリは`react-calendar`または`@fullcalendar/react`を推奨
+- メトロノームはlookaheadスケジューラー（`setInterval` + Web Audio API）で実装済みのためWebWorker不要
+- カレンダーはカスタム実装（react-calendar 未使用）。CalendarView.jsx が月グリッドを担当
+- チューナーのスムージング定数（`FREQ_ALPHA`, `CENTS_ALPHA`, `STABLE_FRAMES`）はTuner.jsx上部で調整可能
 
 ## 🚀 ローカル開発の始め方
 
