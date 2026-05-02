@@ -1,0 +1,51 @@
+@import "tailwindcss";
+
+@theme {
+  --font-sans: 'Noto Sans JP', sans-serif;
+  --color-primary: #4f46e5;
+  --color-primary-dark: #3730a3;
+  --color-primary-light: #818cf8;
+  --color-accent: #d4af37;
+}
+
+body {
+  font-family: 'Noto Sans JP', sans-serif;
+  background-color: #f5f3ff;
+  color: #1e1b4b;
+}
+
+/* react-calendar カスタム */
+.calendar-wrapper .react-calendar {
+  width: 100%;
+  border: none;
+  font-family: 'Noto Sans JP', sans-serif;
+  background: transparent;
+}
+.calendar-wrapper .react-calendar__tile {
+  border-radius: 8px;
+  padding: 6px 4px;
+  font-size: 0.8rem;
+}
+.calendar-wrapper .react-calendar__tile--active,
+.calendar-wrapper .react-calendar__tile--active:hover {
+  background: #4f46e5;
+  color: white;
+  border-radius: 8px;
+}
+.calendar-wrapper .react-calendar__tile--now {
+  background: #ede9fe;
+}
+.calendar-wrapper .react-calendar__tile--now.react-calendar__tile--active {
+  background: #4f46e5;
+}
+.calendar-wrapper .react-calendar__navigation button {
+  font-weight: bold;
+  font-size: 0.9rem;
+}
+.calendar-wrapper .react-calendar__month-view__weekdays {
+  font-size: 0.7rem;
+  color: #6b7280;
+}
+.calendar-wrapper .react-calendar__month-view__weekdays abbr {
+  text-decoration: none;
+}
