@@ -12,6 +12,16 @@ const BPM_MAX = 240
 const LOOKAHEAD_MS = 25
 const SCHEDULE_AHEAD_SEC = 0.1
 
+const BPM_LABEL = (bpm) => {
+  if (bpm < 60)  return 'Largo'
+  if (bpm < 76)  return 'Adagio'
+  if (bpm < 108) return 'Andante'
+  if (bpm < 120) return 'Moderato'
+  if (bpm < 156) return 'Allegro'
+  if (bpm < 200) return 'Presto'
+  return 'Prestissimo'
+}
+
 function scheduleClick(ctx, time, isAccent) {
   const osc = ctx.createOscillator()
   const gain = ctx.createGain()
@@ -26,9 +36,9 @@ function scheduleClick(ctx, time, isAccent) {
 
 export default function Metronome() {
   const [bpm, setBpm] = useState(120)
-  const [timeSig, setTimeSig] = useState(TIME_SIGS[2]) // 4/4
+  const [timeSig, setTimeSig] = useState(TIME_SIGS[2])
   const [active, setActive] = useState(false)
-  const [currentBeat, setCurrentBeat] = useState(0) // 0-indexed, 表示用
+  const [currentBeat, setCurrentBeat] = useState(-1)
 
   const ctxRef = useRef(null)
   const timerRef = useRef(null)
@@ -68,12 +78,11 @@ export default function Metronome() {
     ctxRef.current?.close()
     ctxRef.current = null
     setActive(false)
-    setCurrentBeat(0)
+    setCurrentBeat(-1)
   }, [])
 
   useEffect(() => () => stop(), [stop])
 
-  // タップテンポ
   const tapTimesRef = useRef([])
   const handleTap = () => {
     const now = Date.now()
@@ -82,102 +91,106 @@ export default function Metronome() {
     if (tapTimesRef.current.length >= 2) {
       const diffs = tapTimesRef.current.slice(1).map((t, i) => t - tapTimesRef.current[i])
       const avg = diffs.reduce((a, b) => a + b, 0) / diffs.length
-      const newBpm = Math.round(60000 / avg)
-      setBpm(Math.max(BPM_MIN, Math.min(BPM_MAX, newBpm)))
+      setBpm(Math.max(BPM_MIN, Math.min(BPM_MAX, Math.round(60000 / avg))))
     }
   }
 
-  const beats = timeSig.beats
-
   return (
-    <div className="space-y-6">
+    <div className="space-y-4">
       {/* 拍子選択 */}
-      <div className="bg-white rounded-2xl p-4 shadow-sm">
-        <p className="text-xs font-medium text-gray-500 mb-2">拍子</p>
-        <div className="flex gap-2">
-          {TIME_SIGS.map((ts) => (
-            <button
-              key={ts.label}
-              onClick={() => { setTimeSig(ts); beatRef.current = 0; setCurrentBeat(0) }}
-              className={`flex-1 py-2 rounded-xl text-sm font-bold transition-colors ${
-                timeSig.label === ts.label
-                  ? 'bg-indigo-600 text-white'
-                  : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
-              }`}
-            >
-              {ts.label}
-            </button>
-          ))}
-        </div>
+      <div className="flex gap-2">
+        {TIME_SIGS.map((ts) => (
+          <button
+            key={ts.label}
+            onClick={() => { setTimeSig(ts); beatRef.current = 0; setCurrentBeat(-1) }}
+            className={`flex-1 py-2.5 rounded-xl text-sm font-bold transition-all ${
+              timeSig.label === ts.label
+                ? 'bg-indigo-600 text-white shadow-sm'
+                : 'bg-white text-gray-400 hover:text-indigo-500 shadow-sm'
+            }`}
+          >
+            {ts.label}
+          </button>
+        ))}
       </div>
 
-      {/* BPM */}
-      <div className="bg-white rounded-2xl p-5 shadow-sm space-y-4">
-        <div className="flex items-center justify-between">
-          <p className="text-xs font-medium text-gray-500">BPM</p>
-          <div className="flex items-center gap-2">
-            <button
-              onClick={() => setBpm((v) => Math.max(BPM_MIN, v - 1))}
-              className="w-8 h-8 rounded-full bg-gray-100 hover:bg-gray-200 text-gray-600 font-bold transition-colors"
-            >−</button>
+      {/* BPMメインカード */}
+      <div className="bg-indigo-950 rounded-3xl p-6 shadow-xl">
+        {/* ビートインジケーター */}
+        <div className="flex justify-center gap-3 mb-6">
+          {Array.from({ length: timeSig.beats }).map((_, i) => (
+            <div
+              key={i}
+              className={`rounded-full transition-all ${
+                active && currentBeat === i
+                  ? i === 0
+                    ? 'w-10 h-10 bg-rose-400 shadow-lg shadow-rose-500/50 scale-110'
+                    : 'w-9 h-9 bg-indigo-400 shadow-md shadow-indigo-400/50 scale-105'
+                  : 'w-7 h-7 bg-indigo-900'
+              }`}
+              style={{ transitionDuration: active && currentBeat === i ? '30ms' : '200ms' }}
+            />
+          ))}
+        </div>
+
+        {/* BPM数字 */}
+        <div className="flex items-center justify-center gap-4 mb-2">
+          <button
+            onClick={() => setBpm((v) => Math.max(BPM_MIN, v - 1))}
+            onPointerDown={(e) => { e.currentTarget._iv = setInterval(() => setBpm((v) => Math.max(BPM_MIN, v - 1)), 80) }}
+            onPointerUp={(e) => clearInterval(e.currentTarget._iv)}
+            onPointerLeave={(e) => clearInterval(e.currentTarget._iv)}
+            className="w-11 h-11 rounded-full bg-indigo-900 hover:bg-indigo-800 text-indigo-300 text-xl font-bold transition-colors active:scale-90 select-none"
+          >
+            −
+          </button>
+          <div className="text-center w-32">
             <input
               type="number" value={bpm} min={BPM_MIN} max={BPM_MAX}
               onChange={(e) => setBpm(Math.max(BPM_MIN, Math.min(BPM_MAX, Number(e.target.value))))}
-              className="w-16 text-center text-2xl font-bold text-indigo-700 border-none outline-none"
+              className="w-full text-center text-6xl font-black text-white bg-transparent border-none outline-none leading-none"
             />
-            <button
-              onClick={() => setBpm((v) => Math.min(BPM_MAX, v + 1))}
-              className="w-8 h-8 rounded-full bg-gray-100 hover:bg-gray-200 text-gray-600 font-bold transition-colors"
-            >＋</button>
+            <p className="text-indigo-400 text-xs font-medium mt-1">{BPM_LABEL(bpm)}</p>
           </div>
+          <button
+            onClick={() => setBpm((v) => Math.min(BPM_MAX, v + 1))}
+            onPointerDown={(e) => { e.currentTarget._iv = setInterval(() => setBpm((v) => Math.min(BPM_MAX, v + 1)), 80) }}
+            onPointerUp={(e) => clearInterval(e.currentTarget._iv)}
+            onPointerLeave={(e) => clearInterval(e.currentTarget._iv)}
+            className="w-11 h-11 rounded-full bg-indigo-900 hover:bg-indigo-800 text-indigo-300 text-xl font-bold transition-colors active:scale-90 select-none"
+          >
+            ＋
+          </button>
         </div>
 
+        {/* スライダー */}
         <input
           type="range" min={BPM_MIN} max={BPM_MAX} value={bpm}
           onChange={(e) => setBpm(Number(e.target.value))}
-          className="w-full accent-indigo-600"
+          className="w-full accent-indigo-400 mt-4"
         />
-
-        <div className="flex justify-between text-xs text-gray-400">
-          <span>Largo 40</span><span>Andante 76</span><span>Allegro 160</span><span>Presto 240</span>
+        <div className="flex justify-between text-[10px] text-indigo-700 font-medium mt-1 px-0.5">
+          <span>40</span><span>Andante</span><span>Allegro</span><span>240</span>
         </div>
       </div>
 
-      {/* ビートインジケーター */}
-      <div className="bg-white rounded-2xl p-5 shadow-sm">
-        <div className="flex justify-center gap-3">
-          {Array.from({ length: beats }).map((_, i) => (
-            <div
-              key={i}
-              className={`rounded-full transition-all duration-75 ${
-                active && currentBeat === i
-                  ? i === 0
-                    ? 'w-10 h-10 bg-pink-500 shadow-lg shadow-pink-200'
-                    : 'w-8 h-8 bg-indigo-500 shadow-md shadow-indigo-200'
-                  : 'w-7 h-7 bg-gray-200'
-              }`}
-            />
-          ))}
-        </div>
+      {/* タップテンポ + 開始/停止 */}
+      <div className="flex gap-3">
+        <button
+          onPointerDown={handleTap}
+          className="flex-1 py-4 rounded-2xl border-2 border-indigo-200 text-indigo-600 font-semibold text-sm hover:bg-indigo-50 active:bg-indigo-100 active:scale-95 transition-all select-none"
+        >
+          👆 タップ
+        </button>
+        <button
+          onClick={active ? stop : start}
+          className={`flex-1 py-4 rounded-2xl font-bold text-white shadow-md transition-all active:scale-95 ${
+            active ? 'bg-rose-500 hover:bg-rose-600' : 'bg-indigo-600 hover:bg-indigo-700'
+          }`}
+        >
+          {active ? '⏹ 停止' : '▶ 開始'}
+        </button>
       </div>
-
-      {/* タップテンポ */}
-      <button
-        onPointerDown={handleTap}
-        className="w-full py-4 rounded-2xl border-2 border-indigo-200 text-indigo-600 font-medium text-sm hover:bg-indigo-50 active:bg-indigo-100 transition-colors select-none"
-      >
-        👆 タップテンポ
-      </button>
-
-      {/* 開始/停止 */}
-      <button
-        onClick={active ? stop : start}
-        className={`w-full py-4 rounded-2xl font-bold text-white text-lg shadow-md transition-colors ${
-          active ? 'bg-red-500 hover:bg-red-600' : 'bg-indigo-600 hover:bg-indigo-700'
-        }`}
-      >
-        {active ? '⏹ 停止' : '▶ 開始'}
-      </button>
     </div>
   )
 }

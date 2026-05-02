@@ -2,18 +2,13 @@ import { useState, useEffect, useRef, useCallback } from 'react'
 
 const NOTE_NAMES = ['C', 'C#', 'D', 'D#', 'E', 'F', 'F#', 'G', 'G#', 'A', 'A#', 'B']
 const A4_MIDI = 69
-
-// EMAの平滑化係数 — 小さいほど滑らか（0.1〜0.3推奨）
 const FREQ_ALPHA = 0.08
 const CENTS_ALPHA = 0.06
-// 同じ音名がこのフレーム数続いたら表示を切り替え（≒100ms）
 const STABLE_FRAMES = 4
-// 表示更新間隔（ms）：30fps
 const FRAME_INTERVAL = 33
-// ノイズゲート
 const RMS_THRESHOLD = 0.015
-// 自己相関の信頼度閾値
 const CORR_THRESHOLD = 0.92
+const CENT_MAX = 50
 
 function freqToNoteInfo(freq, a4) {
   if (!freq || freq <= 0) return null
@@ -25,7 +20,6 @@ function freqToNoteInfo(freq, a4) {
   return { name, octave, cents, freq: freq.toFixed(1) }
 }
 
-// 自己相関による基本周波数推定 — confidence（信頼度）も返す
 function detectPitch(buffer, sampleRate) {
   const SIZE = buffer.length
   const MAX_SAMPLES = Math.floor(SIZE / 2)
@@ -33,37 +27,28 @@ function detectPitch(buffer, sampleRate) {
   let bestCorr = 0
   let lastCorr = 1
   let foundGoodCorr = false
-
   const corr = new Float32Array(MAX_SAMPLES)
   for (let i = 0; i < MAX_SAMPLES; i++) {
     let c = 0
     for (let j = 0; j < MAX_SAMPLES; j++) c += buffer[j] * buffer[j + i]
     corr[i] = c
   }
-
   for (let i = 1; i < MAX_SAMPLES; i++) {
     const normalized = corr[i] / corr[0]
     if (normalized > CORR_THRESHOLD && normalized > lastCorr) {
       foundGoodCorr = true
       if (normalized > bestCorr) { bestCorr = normalized; bestOffset = i }
-    } else if (foundGoodCorr) {
-      break
-    }
+    } else if (foundGoodCorr) break
     lastCorr = normalized
   }
-
   if (!foundGoodCorr || bestOffset === -1) return null
-
   const shift =
     bestOffset > 0 && bestOffset < MAX_SAMPLES - 1
       ? (corr[bestOffset + 1] - corr[bestOffset - 1]) /
         (2 * (2 * corr[bestOffset] - corr[bestOffset - 1] - corr[bestOffset + 1]))
       : 0
-
-  return { freq: sampleRate / (bestOffset + shift), confidence: bestCorr }
+  return { freq: sampleRate / (bestOffset + shift) }
 }
-
-const CENT_MAX = 50
 
 export default function Tuner() {
   const [a4, setA4] = useState(442)
@@ -75,10 +60,8 @@ export default function Tuner() {
   const analyserRef = useRef(null)
   const streamRef = useRef(null)
   const rafRef = useRef(null)
-
-  // スムージング用の内部状態（Refで管理してRerender不要にする）
   const smoothedFreqRef = useRef(null)
-  const noteHistoryRef = useRef([])   // 直近N回の音名
+  const noteHistoryRef = useRef([])
   const smoothedCentsRef = useRef(0)
   const lastFrameTimeRef = useRef(0)
 
@@ -106,65 +89,37 @@ export default function Tuner() {
       analyser.fftSize = 2048
       analyserRef.current = analyser
       ctx.createMediaStreamSource(stream).connect(analyser)
-
       const buf = new Float32Array(analyser.fftSize)
-
       const loop = (timestamp) => {
         rafRef.current = requestAnimationFrame(loop)
-
-        // 30fps制限
         if (timestamp - lastFrameTimeRef.current < FRAME_INTERVAL) return
         lastFrameTimeRef.current = timestamp
-
         analyser.getFloatTimeDomainData(buf)
         const rms = Math.sqrt(buf.reduce((s, v) => s + v * v, 0) / buf.length)
-
         if (rms < RMS_THRESHOLD) {
-          // 無音: 状態リセット
           smoothedFreqRef.current = null
           noteHistoryRef.current = []
           setNoteInfo(null)
           return
         }
-
         const result = detectPitch(buf, ctx.sampleRate)
         if (!result) return
-
-        // EMAで周波数をスムージング
-        if (smoothedFreqRef.current === null) {
-          smoothedFreqRef.current = result.freq
-        } else {
-          smoothedFreqRef.current =
-            FREQ_ALPHA * result.freq + (1 - FREQ_ALPHA) * smoothedFreqRef.current
-        }
-
+        smoothedFreqRef.current = smoothedFreqRef.current === null
+          ? result.freq
+          : FREQ_ALPHA * result.freq + (1 - FREQ_ALPHA) * smoothedFreqRef.current
         const info = freqToNoteInfo(smoothedFreqRef.current, a4)
         if (!info) return
-
-        // セントはさらに強くスムージング（針の細かい揺れを抑制）
-        smoothedCentsRef.current =
-          CENTS_ALPHA * info.cents + (1 - CENTS_ALPHA) * smoothedCentsRef.current
-
-        const smoothedInfo = {
-          ...info,
-          cents: Math.round(smoothedCentsRef.current),
-        }
-
-        // 音名の安定化: 直近N回が全て同じ音名になったときだけ音名を更新
+        smoothedCentsRef.current = CENTS_ALPHA * info.cents + (1 - CENTS_ALPHA) * smoothedCentsRef.current
+        const smoothedInfo = { ...info, cents: Math.round(smoothedCentsRef.current) }
         const history = noteHistoryRef.current
         history.push(info.name)
         if (history.length > STABLE_FRAMES) history.shift()
-
         const stable = history.length === STABLE_FRAMES && history.every((n) => n === info.name)
-
         setNoteInfo((prev) => {
-          // 音名が安定して切り替わった or 初回表示
           if (!prev || stable) return smoothedInfo
-          // 音名は維持しつつセント・周波数だけ更新（ちらつき防止）
           return { ...prev, cents: smoothedInfo.cents, freq: smoothedInfo.freq }
         })
       }
-
       rafRef.current = requestAnimationFrame(loop)
       setActive(true)
     } catch {
@@ -181,90 +136,131 @@ export default function Tuner() {
   const cents = noteInfo?.cents ?? 0
   const needleAngle = Math.max(-90, Math.min(90, (cents / CENT_MAX) * 90))
   const inTune = Math.abs(cents) <= 5
-  const needleColor = inTune ? '#22c55e' : Math.abs(cents) <= 15 ? '#f59e0b' : '#ef4444'
+  const needleColor = inTune ? '#34d399' : Math.abs(cents) <= 15 ? '#fbbf24' : '#f87171'
+  const meterAngle = needleAngle * (Math.PI / 180)
+  const needleX = 100 + 72 * Math.sin(meterAngle)
+  const needleY = 100 - 72 * Math.cos(meterAngle)
 
   return (
-    <div className="space-y-6">
-      {/* A4 ピッチ選択 */}
-      <div className="bg-white rounded-2xl p-4 shadow-sm">
-        <p className="text-xs font-medium text-gray-500 mb-2">A4 基準ピッチ</p>
-        <div className="flex gap-2 flex-wrap">
-          {[440, 441, 442, 443, 444].map((hz) => (
-            <button
-              key={hz}
-              onClick={() => setA4(hz)}
-              className={`px-3 py-1.5 rounded-full text-sm font-medium transition-colors ${
-                a4 === hz ? 'bg-indigo-600 text-white' : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
-              }`}
-            >
-              {hz}
-            </button>
-          ))}
-        </div>
-      </div>
+    <div className="space-y-4">
+      {/* メインカード（ダーク） */}
+      <div className="bg-indigo-950 rounded-3xl p-6 shadow-xl flex flex-col items-center gap-5">
 
-      {/* メーター */}
-      <div className="bg-white rounded-2xl p-6 shadow-sm flex flex-col items-center gap-4">
-        {/* 針メーター */}
-        <div className="relative w-64 h-36 overflow-hidden">
-          <svg viewBox="0 0 200 110" className="w-full h-full">
-            {/* 背景弧 */}
-            <path d="M 10 100 A 90 90 0 0 1 190 100" fill="none" stroke="#e5e7eb" strokeWidth="12" strokeLinecap="round" />
-            {/* チューン範囲（中央±5cent） */}
-            <path d="M 90 10 A 90 90 0 0 1 110 10" fill="none" stroke="#86efac" strokeWidth="12" strokeLinecap="round" />
-            {/* 目盛り */}
-            {[-4, -3, -2, -1, 0, 1, 2, 3, 4].map((i) => {
-              const angle = (i / 4) * 80 * (Math.PI / 180)
-              const cx = 100 + 78 * Math.sin(angle)
-              const cy = 100 - 78 * Math.cos(angle)
-              return <circle key={i} cx={cx} cy={cy} r={i === 0 ? 3 : 1.5} fill={i === 0 ? '#4f46e5' : '#9ca3af'} />
-            })}
-            {/* 針 — transitionを長めに取って動きを滑らかに */}
-            {(() => {
-              const angle = needleAngle * (Math.PI / 180)
-              const x = 100 + 70 * Math.sin(angle)
-              const y = 100 - 70 * Math.cos(angle)
-              return (
-                <line
-                  x1="100" y1="100" x2={x} y2={y}
-                  stroke={needleColor} strokeWidth="3" strokeLinecap="round"
-                  style={{ transition: 'x2 0.3s ease-out, y2 0.3s ease-out, stroke 0.3s' }}
-                />
-              )
-            })()}
-            <circle cx="100" cy="100" r="5" fill={needleColor} style={{ transition: 'fill 0.2s' }} />
-          </svg>
-          <div className="absolute bottom-0 left-0 right-0 flex justify-between px-2 text-xs text-gray-400">
-            <span>-50</span><span>0</span><span>+50</span>
-          </div>
-        </div>
-
-        {/* 音名表示 */}
-        <div className="text-center min-h-[80px] flex flex-col items-center justify-center">
+        {/* 音名 */}
+        <div className="text-center min-h-[96px] flex flex-col items-center justify-center">
           {noteInfo ? (
             <>
-              <p className="text-6xl font-bold text-indigo-700 leading-none">
-                {noteInfo.name}
-                <span className="text-3xl text-indigo-400">{noteInfo.octave}</span>
-              </p>
-              <p className="text-gray-400 text-sm mt-2">{noteInfo.freq} Hz</p>
-              <p className={`text-sm font-medium mt-1 ${inTune ? 'text-green-500' : 'text-gray-500'}`}>
-                {inTune ? '♪ チューニング OK' : `${cents > 0 ? '+' : ''}${cents} cent`}
+              <div className="flex items-end justify-center gap-1 leading-none">
+                <span className="text-7xl font-black text-white tracking-tight">{noteInfo.name}</span>
+                <span className="text-3xl font-bold text-indigo-400 mb-1">{noteInfo.octave}</span>
+              </div>
+              <p className="text-indigo-400 text-sm mt-2">{noteInfo.freq} Hz</p>
+              <p className={`text-sm font-semibold mt-1 ${inTune ? 'text-emerald-400' : 'text-indigo-300'}`}>
+                {inTune ? '✓ In Tune' : `${cents > 0 ? '+' : ''}${cents} cent`}
               </p>
             </>
           ) : (
-            <p className="text-gray-300 text-lg">{active ? '音を鳴らしてください' : '―'}</p>
+            <p className="text-indigo-600 text-base">
+              {active ? '音を鳴らしてください' : '―'}
+            </p>
           )}
+        </div>
+
+        {/* SVGメーター */}
+        <div className="relative w-full max-w-[280px]">
+          <svg viewBox="0 0 200 115" className="w-full">
+            {/* 外側リング */}
+            <path d="M 12 104 A 90 90 0 0 1 188 104" fill="none" stroke="#1e1b4b" strokeWidth="16" strokeLinecap="round" />
+            {/* グラデーション弧（赤→黄→緑→黄→赤） */}
+            {[
+              { from: -80, to: -40, color: '#f87171' },
+              { from: -40, to: -15, color: '#fbbf24' },
+              { from: -15, to:  15, color: '#34d399' },
+              { from:  15, to:  40, color: '#fbbf24' },
+              { from:  40, to:  80, color: '#f87171' },
+            ].map(({ from, to, color }, idx) => {
+              const r = 90
+              const cx = 100, cy = 104
+              const a1 = (from / 100) * 80 * (Math.PI / 180)
+              const a2 = (to / 100) * 80 * (Math.PI / 180)
+              const x1 = cx + r * Math.sin(a1), y1 = cy - r * Math.cos(a1)
+              const x2 = cx + r * Math.sin(a2), y2 = cy - r * Math.cos(a2)
+              const large = Math.abs(to - from) > 50 ? 1 : 0
+              return (
+                <path
+                  key={idx}
+                  d={`M ${x1} ${y1} A ${r} ${r} 0 ${large} 1 ${x2} ${y2}`}
+                  fill="none" stroke={color} strokeWidth="6" strokeLinecap="round" opacity="0.7"
+                />
+              )
+            })}
+            {/* 中央グリーンゾーン強調 */}
+            <path d="M 93 14 A 90 90 0 0 1 107 14" fill="none" stroke="#34d399" strokeWidth="6" strokeLinecap="round" opacity="1" />
+            {/* 目盛り */}
+            {[-4, -3, -2, -1, 0, 1, 2, 3, 4].map((i) => {
+              const a = (i / 4) * 80 * (Math.PI / 180)
+              const r1 = 80, r2 = i === 0 ? 70 : 75
+              return (
+                <line
+                  key={i}
+                  x1={100 + r1 * Math.sin(a)} y1={104 - r1 * Math.cos(a)}
+                  x2={100 + r2 * Math.sin(a)} y2={104 - r2 * Math.cos(a)}
+                  stroke={i === 0 ? '#818cf8' : '#3730a3'} strokeWidth={i === 0 ? 2.5 : 1.5}
+                />
+              )
+            })}
+            {/* 針の影 */}
+            <line
+              x1="100" y1="104" x2={needleX + 1} y2={needleY + 1}
+              stroke="#000" strokeWidth="3.5" strokeLinecap="round" opacity="0.3"
+              style={{ transition: 'x2 0.3s ease-out, y2 0.3s ease-out' }}
+            />
+            {/* 針 */}
+            <line
+              x1="100" y1="104" x2={needleX} y2={needleY}
+              stroke={needleColor} strokeWidth="3" strokeLinecap="round"
+              style={{ transition: 'x2 0.3s ease-out, y2 0.3s ease-out, stroke 0.3s' }}
+            />
+            {/* 軸 */}
+            <circle cx="100" cy="104" r="6" fill={needleColor} style={{ transition: 'fill 0.3s' }} />
+            <circle cx="100" cy="104" r="3" fill="#0f0e2a" />
+          </svg>
+          {/* セントラベル */}
+          <div className="absolute bottom-1 left-0 right-0 flex justify-between px-3 text-[10px] text-indigo-600 font-medium">
+            <span>−50</span><span>0</span><span>+50</span>
+          </div>
+        </div>
+
+        {/* A4ピッチ選択 */}
+        <div className="w-full">
+          <p className="text-indigo-500 text-xs text-center mb-2">A4 基準ピッチ</p>
+          <div className="flex gap-1.5 justify-center">
+            {[440, 441, 442, 443, 444].map((hz) => (
+              <button
+                key={hz}
+                onClick={() => setA4(hz)}
+                className={`flex-1 py-1.5 rounded-lg text-xs font-bold transition-all ${
+                  a4 === hz
+                    ? 'bg-indigo-500 text-white shadow-sm'
+                    : 'bg-indigo-900 text-indigo-400 hover:bg-indigo-800'
+                }`}
+              >
+                {hz}
+              </button>
+            ))}
+          </div>
         </div>
       </div>
 
-      {error && <p className="text-sm text-red-500 bg-red-50 rounded-xl px-4 py-3">{error}</p>}
+      {error && <p className="text-sm text-red-400 bg-red-950/50 rounded-xl px-4 py-3 text-center">{error}</p>}
 
       {/* 開始/停止ボタン */}
       <button
         onClick={active ? stop : start}
-        className={`w-full py-4 rounded-2xl font-bold text-white text-lg shadow-md transition-colors ${
-          active ? 'bg-red-500 hover:bg-red-600' : 'bg-indigo-600 hover:bg-indigo-700'
+        className={`w-full py-4 rounded-2xl font-bold text-white text-base shadow-lg transition-all active:scale-95 ${
+          active
+            ? 'bg-rose-500 hover:bg-rose-600'
+            : 'bg-indigo-600 hover:bg-indigo-700'
         }`}
       >
         {active ? '⏹ 停止' : '🎤 チューナー開始'}
