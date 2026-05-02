@@ -3,30 +3,69 @@ import { useNavigate } from 'react-router-dom'
 import Layout from '../components/layout/Layout'
 import { useAuth } from '../contexts/AuthContext'
 import { useRecords } from '../hooks/useRecords'
+import { useEvents } from '../hooks/useEvents'
 
-const today = () => new Date().toISOString().slice(0, 10)
+const todayYMD = () => new Date().toISOString().slice(0, 10)
+
+const diffDays = (dateStr) => {
+  const today = new Date()
+  today.setHours(0, 0, 0, 0)
+  const target = new Date(dateStr + 'T00:00:00')
+  return Math.ceil((target - today) / (1000 * 60 * 60 * 24))
+}
+
+const formatDate = (dateStr) => {
+  const d = new Date(dateStr + 'T00:00:00')
+  return d.toLocaleDateString('ja-JP', { month: 'short', day: 'numeric', weekday: 'short' })
+}
 
 export default function HomePage() {
   const { user } = useAuth()
-  const { records, loading } = useRecords()
+  const { records, loading: recordsLoading } = useRecords()
+  const { events, loading: eventsLoading } = useEvents()
   const navigate = useNavigate()
 
+  const loading = recordsLoading || eventsLoading
+
   const todayMinutes = useMemo(
-    () => records.filter((r) => r.date === today()).reduce((s, r) => s + r.duration_minutes, 0),
+    () => records.filter((r) => r.date === todayYMD()).reduce((s, r) => s + r.duration_minutes, 0),
     [records]
   )
 
   const recent = useMemo(() => records.slice(0, 3), [records])
 
-  const formatDate = (dateStr) => {
-    const d = new Date(dateStr + 'T00:00:00')
-    return d.toLocaleDateString('ja-JP', { month: 'short', day: 'numeric', weekday: 'short' })
-  }
+  // 直近の演奏会（今日以降）
+  const nextConcert = useMemo(
+    () => events.find((e) => e.type === 'concert' && e.date >= todayYMD()),
+    [events]
+  )
+
+  // 直近イベント（演奏会以外も含む、今日以降3件）
+  const upcomingEvents = useMemo(
+    () => events.filter((e) => e.date >= todayYMD()).slice(0, 3),
+    [events]
+  )
+
+  const TYPE_ICON = { concert: '🎼', rehearsal: '🎹', other: '📌' }
 
   return (
     <Layout title="れんめも">
       <div className="p-4 space-y-4">
-        {/* 今日のサマリー */}
+        {/* 本番カウントダウン */}
+        {nextConcert && (() => {
+          const days = diffDays(nextConcert.date)
+          return (
+            <div className="bg-gradient-to-r from-pink-500 to-rose-500 text-white rounded-2xl p-5 shadow-md">
+              <p className="text-pink-100 text-xs">本番まで</p>
+              <p className="font-bold text-3xl mt-0.5">
+                {days === 0 ? '今日！' : days > 0 ? `あと ${days} 日` : `${Math.abs(days)} 日前`}
+              </p>
+              <p className="text-pink-100 text-sm mt-1 truncate">🎼 {nextConcert.title}</p>
+            </div>
+          )
+        })()}
+
+        {/* 今日の練習 */}
         <div className="bg-indigo-600 rounded-2xl p-5 text-white shadow-md">
           <p className="text-indigo-200 text-sm">今日の練習</p>
           {loading ? (
@@ -48,7 +87,33 @@ export default function HomePage() {
           <span>練習を記録する</span>
         </button>
 
-        {/* 最近の記録 */}
+        {/* 直近のイベント */}
+        {upcomingEvents.length > 0 && (
+          <div>
+            <h2 className="text-sm font-bold text-gray-600 mb-2">直近のイベント</h2>
+            <div className="space-y-2">
+              {upcomingEvents.map((e) => {
+                const days = diffDays(e.date)
+                return (
+                  <div key={e.id} className="bg-white rounded-xl px-4 py-3 shadow-sm flex items-center justify-between">
+                    <div className="flex items-center gap-2 min-w-0">
+                      <span className="text-xl">{TYPE_ICON[e.type]}</span>
+                      <div className="min-w-0">
+                        <p className="text-sm font-medium text-gray-700 truncate">{e.title}</p>
+                        <p className="text-xs text-gray-400">{formatDate(e.date)}</p>
+                      </div>
+                    </div>
+                    <span className={`text-xs font-bold shrink-0 ml-2 ${days <= 7 ? 'text-pink-500' : 'text-gray-400'}`}>
+                      {days === 0 ? '今日' : `${days}日後`}
+                    </span>
+                  </div>
+                )
+              })}
+            </div>
+          </div>
+        )}
+
+        {/* 最近の練習記録 */}
         <div>
           <h2 className="text-sm font-bold text-gray-600 mb-2">最近の練習記録</h2>
           {loading ? (
