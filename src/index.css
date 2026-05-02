@@ -10,9 +10,22 @@
 
 body {
   font-family: 'Noto Sans JP', sans-serif;
-  background-color: #f5f3ff;
+  background-color: #f0eeff;
+  color: #1e1b4b;
+  line-height: 1.7;
+  -webkit-font-smoothing: antialiased;
+}
+
+/* 日本語テキストの選択色 */
+::selection {
+  background: #c7d2fe;
   color: #1e1b4b;
 }
+
+/* スクロールバー（webkit） */
+::-webkit-scrollbar { width: 4px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: #c7d2fe; border-radius: 4px; }
 
 /* react-calendar カスタム */
 .calendar-wrapper .react-calendar {
@@ -25,6 +38,7 @@ body {
   border-radius: 8px;
   padding: 6px 4px;
   font-size: 0.8rem;
+  line-height: 1.4;
 }
 .calendar-wrapper .react-calendar__tile--active,
 .calendar-wrapper .react-calendar__tile--active:hover {

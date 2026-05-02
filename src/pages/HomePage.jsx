@@ -19,6 +19,8 @@ const formatDate = (dateStr) => {
   return d.toLocaleDateString('ja-JP', { month: 'short', day: 'numeric', weekday: 'short' })
 }
 
+const TYPE_ICON = { concert: '🎼', rehearsal: '🎹', other: '📌' }
+
 export default function HomePage() {
   const { user } = useAuth()
   const { records, loading: recordsLoading } = useRecords()
@@ -34,77 +36,85 @@ export default function HomePage() {
 
   const recent = useMemo(() => records.slice(0, 3), [records])
 
-  // 直近の演奏会（今日以降）
   const nextConcert = useMemo(
     () => events.find((e) => e.type === 'concert' && e.date >= todayYMD()),
     [events]
   )
 
-  // 直近イベント（演奏会以外も含む、今日以降3件）
   const upcomingEvents = useMemo(
     () => events.filter((e) => e.date >= todayYMD()).slice(0, 3),
     [events]
   )
 
-  const TYPE_ICON = { concert: '🎼', rehearsal: '🎹', other: '📌' }
-
   return (
     <Layout title="れんめも">
-      <div className="p-4 space-y-4">
+      <div className="p-4 space-y-5 max-w-lg mx-auto">
+
         {/* 本番カウントダウン */}
         {nextConcert && (() => {
           const days = diffDays(nextConcert.date)
           return (
-            <div className="bg-gradient-to-r from-pink-500 to-rose-500 text-white rounded-2xl p-5 shadow-md">
-              <p className="text-pink-100 text-xs">本番まで</p>
-              <p className="font-bold text-3xl mt-0.5">
-                {days === 0 ? '今日！' : days > 0 ? `あと ${days} 日` : `${Math.abs(days)} 日前`}
-              </p>
-              <p className="text-pink-100 text-sm mt-1 truncate">🎼 {nextConcert.title}</p>
+            <div className="relative overflow-hidden rounded-2xl shadow-lg">
+              <div className="absolute inset-0 bg-gradient-to-br from-pink-500 via-rose-500 to-orange-400" />
+              <div className="absolute inset-0 opacity-10"
+                style={{ backgroundImage: 'radial-gradient(circle at 80% 20%, white 1px, transparent 1px)', backgroundSize: '24px 24px' }} />
+              <div className="relative px-5 py-5 text-white">
+                <p className="text-pink-100 text-xs font-medium tracking-widest uppercase">Concert Countdown</p>
+                <p className="font-black text-5xl mt-1 leading-none">
+                  {days === 0 ? '今日！' : days > 0 ? `${days}` : `${Math.abs(days)}`}
+                  {days !== 0 && <span className="text-2xl font-bold ml-1">{days > 0 ? '日後' : '日前'}</span>}
+                </p>
+                <p className="text-pink-100 text-sm mt-2 truncate">🎼 {nextConcert.title}</p>
+              </div>
             </div>
           )
         })()}
 
-        {/* 今日の練習 */}
-        <div className="bg-indigo-600 rounded-2xl p-5 text-white shadow-md">
-          <p className="text-indigo-200 text-sm">今日の練習</p>
-          {loading ? (
-            <p className="font-bold text-2xl mt-1">―</p>
-          ) : todayMinutes > 0 ? (
-            <p className="font-bold text-2xl mt-1">{todayMinutes} 分</p>
-          ) : (
-            <p className="text-indigo-300 text-sm mt-1">まだ記録がありません</p>
-          )}
-          <p className="text-xs text-indigo-300 mt-2 truncate">{user?.email}</p>
-        </div>
+        {/* 今日の練習 + クイックアクション */}
+        <div className="grid grid-cols-2 gap-3">
+          <div className="bg-indigo-600 rounded-2xl p-4 text-white shadow-md">
+            <p className="text-indigo-200 text-xs font-medium">今日の練習</p>
+            {loading ? (
+              <p className="font-bold text-2xl mt-1 leading-none">―</p>
+            ) : todayMinutes > 0 ? (
+              <>
+                <p className="font-black text-3xl mt-1 leading-none">{todayMinutes}</p>
+                <p className="text-indigo-300 text-xs mt-0.5">分</p>
+              </>
+            ) : (
+              <p className="text-indigo-300 text-xs mt-2 leading-snug">まだ記録<br/>がありません</p>
+            )}
+          </div>
 
-        {/* クイックアクション */}
-        <button
-          onClick={() => navigate('/records')}
-          className="w-full bg-amber-400 hover:bg-amber-500 text-white font-bold rounded-2xl py-4 shadow-sm transition-colors flex items-center justify-center gap-2"
-        >
-          <span className="text-xl">📝</span>
-          <span>練習を記録する</span>
-        </button>
+          <button
+            onClick={() => navigate('/records')}
+            className="bg-gradient-to-br from-amber-400 to-orange-400 hover:from-amber-500 hover:to-orange-500 active:scale-95 text-white font-bold rounded-2xl p-4 shadow-md transition-all flex flex-col items-start justify-between"
+          >
+            <span className="text-2xl">📝</span>
+            <span className="text-sm leading-tight mt-2">練習を<br/>記録する</span>
+          </button>
+        </div>
 
         {/* 直近のイベント */}
         {upcomingEvents.length > 0 && (
           <div>
-            <h2 className="text-sm font-bold text-gray-600 mb-2">直近のイベント</h2>
+            <h2 className="text-xs font-bold text-gray-500 uppercase tracking-widest mb-2 px-1">Upcoming</h2>
             <div className="space-y-2">
               {upcomingEvents.map((e) => {
                 const days = diffDays(e.date)
                 return (
-                  <div key={e.id} className="bg-white rounded-xl px-4 py-3 shadow-sm flex items-center justify-between">
-                    <div className="flex items-center gap-2 min-w-0">
-                      <span className="text-xl">{TYPE_ICON[e.type]}</span>
-                      <div className="min-w-0">
-                        <p className="text-sm font-medium text-gray-700 truncate">{e.title}</p>
-                        <p className="text-xs text-gray-400">{formatDate(e.date)}</p>
-                      </div>
+                  <div key={e.id} className="bg-white rounded-xl px-4 py-3 shadow-sm flex items-center gap-3">
+                    <span className="text-2xl shrink-0">{TYPE_ICON[e.type]}</span>
+                    <div className="flex-1 min-w-0">
+                      <p className="text-sm font-semibold text-gray-800 truncate">{e.title}</p>
+                      <p className="text-xs text-gray-400">{formatDate(e.date)}</p>
                     </div>
-                    <span className={`text-xs font-bold shrink-0 ml-2 ${days <= 7 ? 'text-pink-500' : 'text-gray-400'}`}>
-                      {days === 0 ? '今日' : `${days}日後`}
+                    <span className={`text-xs font-bold shrink-0 px-2 py-1 rounded-full ${
+                      days <= 7
+                        ? 'bg-pink-100 text-pink-600'
+                        : 'bg-gray-100 text-gray-500'
+                    }`}>
+                      {days === 0 ? '今日' : `${days}日`}
                     </span>
                   </div>
                 )
@@ -115,28 +125,32 @@ export default function HomePage() {
 
         {/* 最近の練習記録 */}
         <div>
-          <h2 className="text-sm font-bold text-gray-600 mb-2">最近の練習記録</h2>
+          <h2 className="text-xs font-bold text-gray-500 uppercase tracking-widest mb-2 px-1">Recent Practice</h2>
           {loading ? (
             <div className="flex justify-center py-8">
-              <div className="w-6 h-6 border-4 border-indigo-600 border-t-transparent rounded-full animate-spin" />
+              <div className="w-6 h-6 border-4 border-indigo-400 border-t-transparent rounded-full animate-spin" />
             </div>
           ) : recent.length === 0 ? (
-            <div className="bg-white rounded-2xl p-6 text-center text-gray-400">
-              <p className="text-3xl mb-1">🎵</p>
-              <p className="text-sm">まだ記録がありません</p>
+            <div className="bg-white rounded-2xl p-8 text-center">
+              <p className="text-4xl mb-3">🎵</p>
+              <p className="text-sm font-medium text-gray-500">まだ練習記録がありません</p>
+              <p className="text-xs text-gray-400 mt-1">「記録する」ボタンから始めてみましょう</p>
             </div>
           ) : (
             <div className="space-y-2">
-              {recent.map((r) => (
-                <div key={r.id} className="bg-white rounded-xl px-4 py-3 shadow-sm flex items-center justify-between">
-                  <div>
-                    <p className="text-xs text-gray-400">{formatDate(r.date)}</p>
-                    <p className="text-sm font-medium text-gray-700">
-                      {r.duration_minutes} 分
-                      {r.pieces && <span className="text-gray-400 font-normal"> · {r.pieces.title}</span>}
-                    </p>
+              {recent.map((r, i) => (
+                <div key={r.id} className={`bg-white rounded-xl px-4 py-3 shadow-sm flex items-center gap-3 ${i === 0 ? 'ring-1 ring-indigo-100' : ''}`}>
+                  <div className={`w-8 h-8 rounded-full flex items-center justify-center shrink-0 ${
+                    i === 0 ? 'bg-indigo-600 text-white' : 'bg-indigo-50 text-indigo-400'
+                  }`}>
+                    <span className="text-xs font-bold">{r.duration_minutes}</span>
                   </div>
-                  <span className="text-xl">🎵</span>
+                  <div className="flex-1 min-w-0">
+                    <p className="text-sm font-medium text-gray-700 leading-tight">
+                      {r.pieces?.title ?? '自由練習'}
+                    </p>
+                    <p className="text-xs text-gray-400">{formatDate(r.date)} · {r.duration_minutes}分</p>
+                  </div>
                 </div>
               ))}
             </div>
