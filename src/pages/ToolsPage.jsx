@@ -1,6 +1,7 @@
 import { useState } from 'react'
 import Layout from '../components/layout/Layout'
 import Tuner from '../components/tuner/Tuner'
+import Metronome from '../components/metronome/Metronome'
 
 const TABS = [
   { id: 'tuner',     label: 'チューナー', icon: '🎤' },
@@ -32,12 +33,7 @@ export default function ToolsPage() {
 
       <div className="p-4">
         {tab === 'tuner' && <Tuner />}
-        {tab === 'metronome' && (
-          <div className="text-center text-gray-400 py-16">
-            <p className="text-4xl mb-2">🎵</p>
-            <p className="text-sm">メトロノームは準備中です</p>
-          </div>
-        )}
+        {tab === 'metronome' && <Metronome />}
       </div>
     </Layout>
   )
